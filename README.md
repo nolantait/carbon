@@ -37,27 +37,27 @@ Our premade metrics crates assist with common use cases:
 ### Basic Setup
 
 ```rs
+use crate::{MyAccountDecoder, MyAccountProcessor, MyInstructionDecoder, MyInstructionProcessor};
 use carbon_core::pipeline::Pipeline;
-use carbon_rpc_block_subscribe_datasource::{RpcBlockSubscribe, Filters};
-use solana_client::{
-    rpc_config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter},
-};
-use crate::{
-    MyAccountDecoder, MyAccountProcessor,
-    MyInstructionDecoder, MyInstructionProcessor,
-};
+use carbon_rpc_block_subscribe_datasource::{Filters, RpcBlockSubscribe};
+use solana_client::rpc_config::RpcBlockSubscribeFilter;
+use carbon_log_metrics::LogMetrics;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv::dotenv().ok();
+    env_logger::init();
+
     let pipeline = Pipeline::builder()
-        .datasource(
-            RpcBlockSubscribe::new(
-                env::var("RPC_URL")?,
-                Filters::new(RpcBlockSubscribeFilter::MentionsAccountOrProgram(env::var("MY_PROGRAM_ID")?), None)
-            )
-        )
+        .datasource(RpcBlockSubscribe::new(
+            std::env::var("RPC_URL")?,
+            Filters::new(
+                RpcBlockSubscribeFilter::MentionsAccountOrProgram(std::env::var("MY_PROGRAM_ID")?),
+                None,
+            ),
+        ))
         .instruction(MyInstructionDecoder::new(), MyInstructionProcessor)
-        .metrics(Arc::new(LogMetrics::new()))
+        .metrics(std::sync::Arc::new(LogMetrics::new()))
         .build()?;
 
     pipeline.run().await?;

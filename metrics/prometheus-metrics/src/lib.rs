@@ -186,19 +186,6 @@ pub async fn run_metrics_server(
     .await
 }
 
-#[cfg(test)]
-mod tests {
-    use super::sanitize_name;
-
-    #[test]
-    fn sanitizes_metric_names_for_prometheus() {
-        assert_eq!(
-            sanitize_name("rpc.block-crawler.fetch.failed"),
-            "rpc_block_crawler_fetch_failed"
-        );
-    }
-}
-
 #[cfg(feature = "http-server")]
 pub async fn run_default_metrics_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     run_metrics_server_with_config(PrometheusServerConfig::default()).await
@@ -263,4 +250,17 @@ pub async fn run_metrics_server_with_config(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_name;
+
+    #[test]
+    fn sanitizes_metric_names_for_prometheus() {
+        assert_eq!(
+            sanitize_name("rpc.block-crawler.fetch.failed"),
+            "rpc_block_crawler_fetch_failed"
+        );
+    }
 }

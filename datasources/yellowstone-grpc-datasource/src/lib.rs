@@ -186,11 +186,18 @@ impl YellowstoneGrpcClientConfig {
         builder = builder.connect_timeout(self.connect_timeout.unwrap_or(Duration::from_secs(15)));
 
         builder = builder.timeout(self.timeout.unwrap_or(Duration::from_secs(15)));
-        let tls = self
-            .tls_config
-            .clone()
-            .unwrap_or_else(|| ClientTlsConfig::new().with_enabled_roots());
-        builder = builder.tls_config(tls)?;
+
+        // Only configure TLS when one was explicitly provided or the endpoint
+        // is https. Tonic derives a rustls ServerName from the host whenever a
+        // TLS config is set, which rejects plaintext hosts whose final label
+        // is numeric (e.g. docker container names like `app.web.1`); plaintext
+        // endpoints do not need a TLS config at all.
+        let is_https = builder.endpoint.uri().scheme_str() == Some("https");
+        if let Some(tls) = self.tls_config.clone() {
+            builder = builder.tls_config(tls)?;
+        } else if is_https {
+            builder = builder.tls_config(ClientTlsConfig::new().with_enabled_roots())?;
+        }
 
         if let Some(compression) = self.compression {
             builder = builder

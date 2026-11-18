@@ -24,7 +24,9 @@ use {
     },
     tokio_util::sync::CancellationToken,
     uuid::Uuid,
-    yellowstone_grpc_client::{GeyserGrpcBuilder, GeyserGrpcBuilderResult, GeyserGrpcClient},
+    yellowstone_grpc_client::{
+        GeyserGrpcBuilder, GeyserGrpcBuilderResult, GeyserGrpcClient, GeyserGrpcClientError,
+    },
     yellowstone_grpc_proto::{
         convert_from::{create_tx_meta, create_tx_versioned},
         geyser::{
@@ -33,7 +35,7 @@ use {
             SubscribeRequestFilterSlots, SubscribeRequestFilterTransactions, SubscribeRequestPing,
             SubscribeUpdateAccountInfo, SubscribeUpdateTransactionInfo,
         },
-        tonic::{codec::CompressionEncoding, transport::ClientTlsConfig, Code},
+        tonic::{codec::CompressionEncoding, transport::ClientTlsConfig, Code, Status},
     },
 };
 
@@ -383,7 +385,7 @@ impl Datasource for LaserStreamGeyserClient {
                                             _ => {}
                                         },
                                         Err(error) => {
-                                            if error.code() == Code::OutOfRange {
+                                            if is_status_slot_too_old(&error) {
                                                 // The replay window moved past our requested
                                                 // slot; retrying the same `from_slot` can only
                                                 // fail again. Fall back to the live head rather
@@ -407,7 +409,16 @@ impl Datasource for LaserStreamGeyserClient {
                                 Ok(())
                             }
                             Err(e) => {
-                                log::error!("Failed to subscribe, will retry after 5s delay: {e:?}");
+                                if is_slot_too_old(&e) {
+                                    log::error!(
+                                        "Laserstream rejected from_slot {:?}: {e}. Falling back to the live head; events before it will not be replayed.",
+                                        subscribe_request.from_slot,
+                                    );
+                                    subscribe_request.from_slot = None;
+                                    tracked_slot = 0;
+                                } else {
+                                    log::error!("Failed to subscribe, will retry after 5s delay: {e:?}");
+                                }
                                 Err(carbon_core::error::Error::FailedToConsumeDatasource(e.to_string()))
                             }
                         }
@@ -556,5 +567,42 @@ async fn send_subscribe_update_transaction_info(
         TRANSACTION_UPDATES_RECEIVED.inc();
     } else {
         log::error!("No transaction info in `UpdateOneof::Transaction` at slot {slot}");
+    }
+}
+
+/// Whether Laserstream rejected the subscription because `from_slot` is older
+/// than the oldest slot it still retains. Retrying the same slot can never
+/// succeed, so callers fall back to the live head instead.
+fn is_status_slot_too_old(status: &Status) -> bool {
+    status.code() == Code::OutOfRange
+}
+
+fn is_slot_too_old(error: &GeyserGrpcClientError) -> bool {
+    matches!(
+        error,
+        GeyserGrpcClientError::TonicStatus(status) if is_status_slot_too_old(status)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn out_of_range_status_is_recognized() {
+        assert!(is_status_slot_too_old(&Status::out_of_range(
+            "Requested slot 1 is older than the oldest available slot 2."
+        )));
+        assert!(!is_status_slot_too_old(&Status::internal("boom")));
+    }
+
+    #[test]
+    fn subscribe_errors_are_recognized() {
+        assert!(is_slot_too_old(&GeyserGrpcClientError::TonicStatus(
+            Status::out_of_range("slot too old")
+        )));
+        assert!(!is_slot_too_old(&GeyserGrpcClientError::TonicStatus(
+            Status::unavailable("try later")
+        )));
     }
 }

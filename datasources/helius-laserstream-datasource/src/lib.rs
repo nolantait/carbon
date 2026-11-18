@@ -393,6 +393,10 @@ impl Datasource for LaserStreamGeyserClient {
                                                     subscribe_request.from_slot,
                                                 );
                                                 subscribe_request.from_slot = None;
+                                                // Prevent the replay logic at the top of
+                                                // the loop from re-applying a stale
+                                                // tracked slot on the next attempt.
+                                                tracked_slot = 0;
                                             } else {
                                                 log::error!("Geyser stream error, will reconnect: {error:?}");
                                             }

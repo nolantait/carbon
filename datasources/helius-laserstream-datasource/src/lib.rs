@@ -33,7 +33,7 @@ use {
             SubscribeRequestFilterSlots, SubscribeRequestFilterTransactions, SubscribeRequestPing,
             SubscribeUpdateAccountInfo, SubscribeUpdateTransactionInfo,
         },
-        tonic::{codec::CompressionEncoding, transport::ClientTlsConfig},
+        tonic::{codec::CompressionEncoding, transport::ClientTlsConfig, Code},
     },
 };
 
@@ -383,7 +383,19 @@ impl Datasource for LaserStreamGeyserClient {
                                             _ => {}
                                         },
                                         Err(error) => {
-                                            log::error!("Geyser stream error, will reconnect: {error:?}");
+                                            if error.code() == Code::OutOfRange {
+                                                // The replay window moved past our requested
+                                                // slot; retrying the same `from_slot` can only
+                                                // fail again. Fall back to the live head rather
+                                                // than looping forever.
+                                                log::error!(
+                                                    "Laserstream rejected from_slot {:?}: {error}. Falling back to the live head; events before it will not be replayed.",
+                                                    subscribe_request.from_slot,
+                                                );
+                                                subscribe_request.from_slot = None;
+                                            } else {
+                                                log::error!("Geyser stream error, will reconnect: {error:?}");
+                                            }
                                             break;
                                         }
                                     }
